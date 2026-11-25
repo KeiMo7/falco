@@ -37,6 +37,7 @@ limitations under the License.
 #include "../../stats_writer.h"
 #include "../../falco_outputs.h"
 #include "../../event_drops.h"
+#include "../../reload_ledger/generation_ledger.h"
 
 #include <libsinsp/plugin_manager.h>
 #include <libsinsp/dumper.h>
@@ -100,6 +101,16 @@ struct live_context {
 	std::unique_ptr<source_sync_context> sync;
 };
 
+class engine_rule_totals_provider : public falco::reload_ledger::rule_totals_provider {
+public:
+	explicit engine_rule_totals_provider(const falco_engine& engine): m_engine(engine) {}
+
+	std::map<std::string, uint64_t> poll() override { return m_engine.rule_match_totals(); }
+
+private:
+	const falco_engine& m_engine;
+};
+
 //
 // Event processing loop
 //
@@ -138,6 +149,27 @@ static falco::app::run_result do_inspect(
 	// reset event counter
 	num_evts = 0;
 
+	const auto reload_snapshot = falco::app::g_reload_state.get();
+	auto reload_ledger = std::make_shared<falco::reload_ledger::source_ledger>(
+	        reload_snapshot.instance_id, source);
+	sdropmgr.set_observer(reload_ledger);
+	const uint64_t ledger_generation = reload_snapshot.started_generation;
+	const uint64_t ledger_requests = falco::app::g_reload_state.requested();
+	bool ledger_committed = false;
+	struct uncommitted_generation_guard {
+		std::shared_ptr<falco::reload_ledger::source_ledger> ledger;
+		uint64_t generation;
+		bool& committed;
+
+		~uncommitted_generation_guard() {
+			if(!committed) {
+				ledger->reject(generation,
+				               "event source stopped before generation was committed");
+			}
+		}
+	} ledger_guard{reload_ledger, ledger_generation, ledger_committed};
+	reload_ledger->begin(ledger_generation, ledger_requests);
+
 	// init drop manager if we are inspecting syscalls
 	if(check_drops_and_timeouts) {
 		sdropmgr.init(inspector,
@@ -163,6 +195,9 @@ static falco::app::run_result do_inspect(
 	if(!is_capture_mode) {
 		falco::app::g_reload_state.source_started();
 	}
+	const auto commit_result = reload_ledger->commit(ledger_generation);
+	ledger_committed = commit_result == falco::reload_ledger::outcome::ok ||
+	                   commit_result == falco::reload_ledger::outcome::applied_already;
 
 	const bool collect_prometheus_metrics =
 	        prometheus_metrics_collection_enabled(*s.config, is_capture_mode);
@@ -426,6 +461,9 @@ static falco::app::run_result do_inspect(
 
 		num_evts++;
 	}
+
+	engine_rule_totals_provider rule_totals_provider(*s.engine);
+	reload_ledger->attribute(ledger_generation, rule_totals_provider);
 
 	return run_result::ok();
 }

@@ -839,6 +839,19 @@ void falco_engine::get_json_used_plugins(
 	out = sequence_to_json_array(used_plugins);
 }
 
+std::map<std::string, uint64_t> falco_engine::rule_match_totals() const {
+	std::map<std::string, uint64_t> totals;
+	const auto& stats_by_rule_id = m_rule_stats_manager.get_by_rule_id();
+	for(const auto& rule : m_rules) {
+		uint64_t matches = 0;
+		if(rule.id < stats_by_rule_id.size() && stats_by_rule_id[rule.id] != nullptr) {
+			matches = stats_by_rule_id[rule.id]->load();
+		}
+		totals[rule.name] = matches;
+	}
+	return totals;
+}
+
 void falco_engine::print_stats() const {
 	std::string out;
 	m_rule_stats_manager.format(m_rules, out);

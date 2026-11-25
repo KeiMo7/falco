@@ -58,6 +58,8 @@ add_library(
 	outputs_file.cpp
 	outputs_stdout.cpp
 	event_drops.cpp
+	reload_ledger/drop_attribution.cpp
+	reload_ledger/generation_ledger.cpp
 	stats_writer.cpp
 	versions_info.cpp
 )

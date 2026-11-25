@@ -17,6 +17,38 @@ limitations under the License.
 
 #include "event_drops.h"
 #include "falco_common.h"
+#include "reload_ledger/generation_ledger.h"
+
+namespace {
+
+falco::reload_ledger::sample to_ledger_sample(const scap_stats& stats) {
+	falco::reload_ledger::sample sample;
+	sample.n_evts = stats.n_evts;
+	sample.n_drops = stats.n_drops;
+	sample.n_drops_buffer = stats.n_drops_buffer;
+	sample.n_drops_buffer_clone_fork_exit = stats.n_drops_buffer_clone_fork_exit;
+	sample.n_drops_buffer_execve_exit = stats.n_drops_buffer_execve_exit;
+	sample.n_drops_buffer_connect_exit = stats.n_drops_buffer_connect_exit;
+	sample.n_drops_buffer_open_exit = stats.n_drops_buffer_open_exit;
+	sample.n_drops_buffer_dir_file_exit = stats.n_drops_buffer_dir_file_exit;
+	sample.n_drops_buffer_other_interest_exit = stats.n_drops_buffer_other_interest_exit;
+	sample.n_drops_buffer_close_exit = stats.n_drops_buffer_close_exit;
+	sample.n_drops_buffer_proc_exit = stats.n_drops_buffer_proc_exit;
+	sample.n_drops_scratch_map = stats.n_drops_scratch_map;
+	sample.n_drops_pf = stats.n_drops_pf;
+	sample.n_drops_bug = stats.n_drops_bug;
+	sample.n_preemptions = stats.n_preemptions;
+	sample.n_suppressed = stats.n_suppressed;
+	sample.n_tids_suppressed = stats.n_tids_suppressed;
+	return sample;
+}
+
+}  // namespace
+
+void syscall_evt_drop_mgr::set_observer(
+        std::shared_ptr<falco::reload_ledger::drop_observer> obs) {
+	m_observer = std::move(obs);
+}
 
 syscall_evt_drop_mgr::syscall_evt_drop_mgr():
         m_num_syscall_evt_drops(0),
@@ -95,6 +127,10 @@ bool syscall_evt_drop_mgr::process_event(std::shared_ptr<sinsp> inspector, sinsp
 			delta.n_drops++;
 		}
 
+		bool threshold_exceeded = false;
+		bool bucket_allowed = false;
+		bool perform_drop_actions = false;
+
 		if(delta.n_drops > 0) {
 			double ratio = delta.n_drops;
 			// The `n_evts` always contains the `n_drops`.
@@ -102,22 +138,44 @@ bool syscall_evt_drop_mgr::process_event(std::shared_ptr<sinsp> inspector, sinsp
 
 			// When simulating drops the threshold is always zero
 			if(ratio > m_threshold) {
+				threshold_exceeded = true;
 				m_num_syscall_evt_drops++;
 
 				// There were new drops in the last second.
 				// If the token bucket allows, perform actions.
-				if(m_bucket.claim(1, evt->get_ts())) {
+				bucket_allowed = m_bucket.claim(1, evt->get_ts());
+				if(bucket_allowed) {
 					m_num_actions++;
-
-					return perform_actions(evt->get_ts(),
-					                       delta,
-					                       inspector->check_current_engine(MODERN_BPF_ENGINE));
+					perform_drop_actions = true;
 				} else {
 					falco_logger::log(
 					        falco_logger::level::DEBUG,
 					        "Syscall event drop but token bucket depleted, skipping actions");
 				}
 			}
+		}
+
+		try {
+			if(m_observer != nullptr) {
+				falco::reload_ledger::window ledger_window;
+				if(const auto* ledger = dynamic_cast<
+				           const falco::reload_ledger::source_ledger*>(m_observer.get())) {
+					ledger_window.generation = ledger->applied_generation();
+				}
+				ledger_window.evt_ts = evt->get_ts();
+				ledger_window.absolute = to_ledger_sample(stats);
+				ledger_window.threshold_exceeded = threshold_exceeded;
+				ledger_window.bucket_allowed = bucket_allowed;
+				m_observer->observe_window(ledger_window);
+			}
+		} catch(...) {
+			// Ledger reporting must never alter event processing or drop actions.
+		}
+
+		if(perform_drop_actions) {
+			return perform_actions(evt->get_ts(),
+			                       delta,
+			                       inspector->check_current_engine(MODERN_BPF_ENGINE));
 		}
 	}
 

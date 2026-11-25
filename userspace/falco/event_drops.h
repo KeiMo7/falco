@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "logger.h"
 #include "falco_outputs.h"
+#include "reload_ledger/drop_attribution.h"
 
 // The possible actions that this class can take upon
 // detecting a syscall event drop.
@@ -44,6 +45,8 @@ public:
 	          double max_tokens,
 	          bool simulate_drops);
 
+	void set_observer(std::shared_ptr<falco::reload_ledger::drop_observer> obs);
+
 	// Call this for every event. The class will take care of
 	// periodically measuring the scap stats, looking for syscall
 	// event drops, and performing any actions.
@@ -61,6 +64,7 @@ protected:
 	uint64_t m_num_actions;
 	std::shared_ptr<sinsp> m_inspector;
 	std::shared_ptr<falco_outputs> m_outputs;
+	std::shared_ptr<falco::reload_ledger::drop_observer> m_observer;
 	syscall_evt_drop_actions m_actions;
 	token_bucket m_bucket;
 	uint64_t m_next_check_ts;

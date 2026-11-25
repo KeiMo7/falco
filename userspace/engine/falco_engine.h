@@ -18,6 +18,7 @@ limitations under the License.
 #pragma once
 
 #include <atomic>
+#include <map>
 #include <string>
 #include <memory>
 #include <set>
@@ -157,6 +158,10 @@ public:
 	// across all sources.
 	//
 	uint64_t num_rules_for_ruleset(const std::string &ruleset);
+
+	// Return cumulative match counters keyed by rule name. The query is
+	// read-only and does not clear or otherwise mutate rule statistics.
+	std::map<std::string, uint64_t> rule_match_totals() const;
 
 	//
 	// Print details on the given rule. If rule is NULL, print

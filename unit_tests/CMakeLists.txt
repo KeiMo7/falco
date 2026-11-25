@@ -48,6 +48,8 @@ add_executable(
 	falco/test_capture.cpp
 	falco/test_metrics_snapshot.cpp
 	falco/test_reload_state.cpp
+	falco/test_generation_ledger.cpp
+	falco/test_drop_attribution.cpp
 	falco/test_configuration.cpp
 	falco/test_configuration_rule_selection.cpp
 	falco/test_configuration_config_files.cpp
@@ -102,6 +104,13 @@ target_link_libraries(
 	falco_unit_tests falco_application GTest::gtest GTest::gtest_main
 	${FALCO_APPLICATION_LIBRARIES}
 )
+
+enable_testing()
+add_test(NAME falco_unit_tests COMMAND falco_unit_tests)
+
+# The top-level project does not call enable_testing(); expose this subtree to
+# "ctest --test-dir <build>" without modifying the root CMakeLists.txt.
+file(WRITE "${CMAKE_BINARY_DIR}/CTestTestfile.cmake" "subdirs(\"unit_tests\")\n")
 
 if(EMSCRIPTEN)
 	target_compile_options(falco_unit_tests PRIVATE "-sDISABLE_EXCEPTION_CATCHING=0")
